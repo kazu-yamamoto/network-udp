@@ -33,6 +33,8 @@ newtype ServerSockAddrC = ServerSockAddrC SockAddr deriving (Eq, Show)
 newtype ClientSockAddr = ClientSockAddr SockAddr deriving (Eq, Show)
 
 -- | Sending data with a connected UDP socket.
+--   Faster than other the send functions since
+--   the socket is connected.
 send :: ConnectedSocket -> ByteString -> IO ()
 send (ConnectedSocket s) bs = void $ NSB.send s bs
 
