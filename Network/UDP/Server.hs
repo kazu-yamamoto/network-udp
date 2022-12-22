@@ -27,6 +27,7 @@ module Network.UDP.Server (
   -- * Wildcard socket
     ListenSocket
   , listenSocket
+  , ServerSockAddr
   , ClientSockAddr
   , recvMsg
   , sendMsg
@@ -71,6 +72,17 @@ isAnySockAddr _                               = False
 data ListenSocket = Wildcard Socket
                   | InterfaceSpecific Socket
                   deriving (Eq, Show)
+
+-- | A connected UDP socket which are used with 'recv' and 'send'.
+newtype ConnectedSocket = ConnectedSocket Socket deriving (Eq, Show)
+
+----------------------------------------------------------------
+
+-- | A server socket address from the client point of view.
+newtype ServerSockAddr = ServerSockAddr SockAddr deriving (Eq, Show)
+
+-- | A client socket address from the server point of view.
+newtype ClientSockAddr = ClientSockAddr SockAddr deriving (Eq, Show)
 
 ----------------------------------------------------------------
 
@@ -137,3 +149,15 @@ connectedSocket (ServerSockAddr mysa) (ClientSockAddr peersa) = E.bracketOnError
       | otherwise                             = E.throwIO e
     family = sockAddrFamily mysa
     open   = socket family Datagram defaultProtocol
+
+----------------------------------------------------------------
+
+-- | Sending data with a connected UDP socket.
+--   Faster than other the send functions since
+--   the socket is connected.
+send :: ConnectedSocket -> ByteString -> IO ()
+send (ConnectedSocket s) bs = void $ NSB.send s bs
+
+-- | Receiving data with a connected UDP socket.
+recv :: ConnectedSocket -> Int -> IO ByteString
+recv (ConnectedSocket s) = R.recv s

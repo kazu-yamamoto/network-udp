@@ -5,74 +5,69 @@
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2021/06/29/134930
 --   * https://www.iij.ad.jp/en/dev/iir/pdf/iir_vol52_focus2_EN.pdf (Sec 3.9)
 module Network.UDP.Client (
-  -- * Unconnected socket
-    UnconnectedSocket
-  , ServerSockAddr(..)
-  , unconnectedSocket
-  , sendTo
-  , recvFrom
-  -- * Connected socket
-  , ConnectedSocket
-  , ServerSockAddrC
-  , connect
+  -- * Client socket
+    ClientSocket(..)
+  , clientSocket
+  -- * IO
   , send
+  , sendBuf
   , recv
+  , recvBuf
   -- * NAT rebinding
-  , natRebindingUnconnectedSocket
-  , natRebindingConnectedSocket
+  , natRebinding
   ) where
 
 import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString (ByteString)
 import qualified Network.Socket as NS
-import Network.Socket hiding (connect)
+import Network.Socket hiding (connect, sendBuf, recvBuf)
 import qualified Network.Socket.ByteString as NSB
+import Foreign.Ptr (Ptr)
 
 import Network.UDP.Types
 import qualified Network.UDP.Recv as R
 
+data ClientSocket = ClientSocket Socket SockAddr Bool
+                  deriving (Eq, Show)
+
 -- | Creating a unconnected UDP socket.
-unconnectedSocket :: HostName -> ServiceName -> IO (UnconnectedSocket,SockAddr)
-unconnectedSocket host port = do
+clientSocket :: HostName -> ServiceName -> Bool -> IO ClientSocket
+clientSocket host port conn = do
     addr <- head <$> getAddrInfo (Just hints) (Just host) (Just port)
     E.bracketOnError (openSocket addr) close $ \s -> do
         let sa = addrAddress addr
-        return (UnconnectedSocket s,sa)
+        when conn $ NS.connect s sa
+        return $ ClientSocket s sa conn
  where
     hints = defaultHints { addrSocketType = Datagram }
 
--- | Sending data with a unconnected UDP socket.
-sendTo :: UnconnectedSocket -> ByteString -> ServerSockAddr -> IO ()
-sendTo (UnconnectedSocket s) bs (ServerSockAddr sa) = void $ NSB.sendTo s bs sa
+send :: ClientSocket -> (ByteString -> IO ())
+send (ClientSocket s sa conn)
+  | conn      = \bs -> void $ NSB.send s bs
+  | otherwise = \bs -> void $ NSB.sendTo s bs sa
 
--- | Receiving data with a unconnected UDP socket.
-recvFrom :: UnconnectedSocket -> IO (ByteString, ServerSockAddr)
-recvFrom (UnconnectedSocket s) = do
-    (bs, sa) <- R.recvFrom s properUDPSize
-    return (bs, ServerSockAddr sa)
-
--- | Creating a connected UDP socket.
-connect :: UnconnectedSocket -> ServerSockAddr -> IO (ConnectedSocket, ServerSockAddrC)
-connect (UnconnectedSocket s) (ServerSockAddr sa) = do
-    NS.connect s sa
-    return (ConnectedSocket s, ServerSockAddrC sa)
-
--- | Emulation of NAT rebiding in the client side.
---   This is mainly used for test purposes.
-natRebindingUnconnectedSocket :: ServerSockAddr -> IO UnconnectedSocket
-natRebindingUnconnectedSocket (ServerSockAddr sa) = E.bracketOnError open close $ \s ->
-    return $ UnconnectedSocket s
+recv :: ClientSocket -> IO ByteString
+recv (ClientSocket s sa conn)
+  | conn      = R.recv s properUDPSize
+  | otherwise = go
   where
-    family = sockAddrFamily sa
-    open = socket family Datagram defaultProtocol
+    go = do
+        (bs, sa') <- R.recvFrom s properUDPSize
+        if sa == sa' then return bs else go
+
+sendBuf :: ClientSocket -> (Ptr a -> Int -> IO ())
+sendBuf = undefined
+
+recvBuf :: ClientSocket -> (Ptr a -> Int -> IO Int)
+recvBuf = undefined
 
 -- | Emulation of NAT rebiding in the client side.
 --   This is mainly used for test purposes.
-natRebindingConnectedSocket :: ServerSockAddrC -> IO ConnectedSocket
-natRebindingConnectedSocket (ServerSockAddrC sa) = E.bracketOnError open close $ \s -> do
-    NS.connect s sa
-    return $ ConnectedSocket s
+natRebinding :: ClientSocket -> IO ClientSocket
+natRebinding (ClientSocket _ sa conn) = E.bracketOnError open close $ \s -> do
+    when conn $ NS.connect s sa
+    return $ ClientSocket s sa conn
   where
     family = sockAddrFamily sa
     open = socket family Datagram defaultProtocol
