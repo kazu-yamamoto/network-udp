@@ -44,10 +44,10 @@ import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
 import Network.Socket
-import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 
 import Network.UDP.Types
+import qualified Network.UDP.Recv as R
 
 ----------------------------------------------------------------
 
@@ -94,13 +94,15 @@ listenSocket ip = E.bracketOnError open close $ \s -> do
 ----------------------------------------------------------------
 
 -- | Receiving data with a listening UDP socket.
+--   For a wildcard socket, recvmsg() is called.
+--   For an interface specific socket, recvfrom() is called.
 recvMsg :: ListenSocket -> IO (ByteString, ClientSockAddr, [Cmsg])
 recvMsg (Wildcard s) = do
-    (sa,b,c,_) <- NSB.recvMsg s properUDPSize properCMSGSize 0
-    return (b,ClientSockAddr sa,c)
+    (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
+    return (bs,ClientSockAddr sa,cmsg)
 recvMsg (InterfaceSpecific s) = do
-    (a,sa) <- NSB.recvFrom s properUDPSize
-    return (a,ClientSockAddr sa,[])
+    (bs,sa) <- R.recvFrom s properUDPSize
+    return (bs,ClientSockAddr sa,[])
 
 -- | Sending data with a listening UDP socket.
 sendMsg :: ListenSocket -> ByteString -> ClientSockAddr -> [Cmsg] -> IO ()

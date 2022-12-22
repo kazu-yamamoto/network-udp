@@ -30,6 +30,7 @@ import Network.Socket hiding (connect)
 import qualified Network.Socket.ByteString as NSB
 
 import Network.UDP.Types
+import qualified Network.UDP.Recv as R
 
 -- | Creating a unconnected UDP socket.
 unconnectedSocket :: HostName -> ServiceName -> IO (UnconnectedSocket,SockAddr)
@@ -48,7 +49,7 @@ sendTo (UnconnectedSocket s) bs (ServerSockAddr sa) = void $ NSB.sendTo s bs sa
 -- | Receiving data with a unconnected UDP socket.
 recvFrom :: UnconnectedSocket -> IO (ByteString, ServerSockAddr)
 recvFrom (UnconnectedSocket s) = do
-    (bs, sa) <- NSB.recvFrom s properUDPSize
+    (bs, sa) <- R.recvFrom s properUDPSize
     return (bs, ServerSockAddr sa)
 
 -- | Creating a connected UDP socket.

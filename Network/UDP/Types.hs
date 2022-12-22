@@ -5,6 +5,8 @@ import Data.ByteString (ByteString)
 import Network.Socket
 import qualified Network.Socket.ByteString as NSB
 
+import qualified Network.UDP.Recv as R
+
 properUDPSize :: Int
 properUDPSize = 2048
 
@@ -40,4 +42,4 @@ send (ConnectedSocket s) bs = void $ NSB.send s bs
 
 -- | Receiving data with a connected UDP socket.
 recv :: ConnectedSocket -> Int -> IO ByteString
-recv (ConnectedSocket s) = NSB.recv s
+recv (ConnectedSocket s) = R.recv s
