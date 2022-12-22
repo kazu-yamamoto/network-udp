@@ -44,6 +44,7 @@ import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
 import Network.Socket
+import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 
 import Network.UDP.Types
@@ -105,8 +106,13 @@ recvMsg (InterfaceSpecific s) = do
     return (bs,ClientSockAddr sa,[])
 
 -- | Sending data with a listening UDP socket.
+--   For a wildcard socket, sendmsg() is called.
+--   For an interface specific socket, sento() is called.
 sendMsg :: ListenSocket -> ByteString -> ClientSockAddr -> [Cmsg] -> IO ()
-sendMsg = undefined
+sendMsg (Wildcard s) bs (ClientSockAddr sa) cmsgs =
+    void $ NSB.sendMsg s sa [bs] cmsgs 0
+sendMsg (InterfaceSpecific s) bs (ClientSockAddr sa) _ =
+    void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
