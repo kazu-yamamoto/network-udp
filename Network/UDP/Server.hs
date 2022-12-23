@@ -29,8 +29,8 @@ module Network.UDP.Server (
     ListenScoket(..)
   , listenSocket
   , ClientSockAddr(..)
-  , recvMsg
-  , sendMsg
+  , recvFrom
+  , sendTo
   -- * Connected socket
   , ServerSocket(..)
   , accept
@@ -73,7 +73,7 @@ isAnySockAddr _                               = False
 ----------------------------------------------------------------
 
 -- | A listening socket for UDP which can be used
---   for 'recvMsg' and 'sendMsg'.
+--   for 'recvFrom' and 'sendTo'.
 --   Optionally, a connected UDP socket can be created
 --   with 'accept' as an emulation of TCP.
 data ListenScoket = ListenScoket Socket SockAddr Bool -- wildcard or not
@@ -114,8 +114,8 @@ listenSocket ip = E.bracketOnError open NS.close $ \s -> do
 -- | Receiving data with a listening UDP socket.
 --   For a wildcard socket, recvmsg() is called.
 --   For an interface specific socket, recvfrom() is called.
-recvMsg :: ListenScoket -> IO (ByteString, ClientSockAddr)
-recvMsg (ListenScoket s _ wildcard)
+recvFrom :: ListenScoket -> IO (ByteString, ClientSockAddr)
+recvFrom (ListenScoket s _ wildcard)
   | wildcard = do
         (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
         return (bs,ClientSockAddr sa cmsg)
@@ -126,8 +126,8 @@ recvMsg (ListenScoket s _ wildcard)
 -- | Sending data with a listening UDP socket.
 --   For a wildcard socket, sendmsg() is called.
 --   For an interface specific socket, sento() is called.
-sendMsg :: ListenScoket -> ByteString -> ClientSockAddr -> IO ()
-sendMsg (ListenScoket s _ wildcard) bs (ClientSockAddr sa cmsgs)
+sendTo :: ListenScoket -> ByteString -> ClientSockAddr -> IO ()
+sendTo (ListenScoket s _ wildcard) bs (ClientSockAddr sa cmsgs)
   | wildcard  = void $ NSB.sendMsg s sa [bs] cmsgs 0
   | otherwise = void $ NSB.sendTo s bs sa
 
