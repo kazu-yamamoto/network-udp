@@ -26,13 +26,13 @@
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2022/02/25/153122
 module Network.UDP.Server (
   -- * Wildcard socket
-    ServerSocket(..)
-  , serverSocket
+    ListenScoket(..)
+  , listenSocket
   , ClientSockAddr(..)
   , recvMsg
   , sendMsg
   -- * Connected socket
-  , ConnectedSocket(..)
+  , ServerSocket(..)
   , accept
   , recv
   , recvBuf
@@ -76,11 +76,11 @@ isAnySockAddr _                               = False
 --   for 'recvMsg' and 'sendMsg'.
 --   Optionally, a connected UDP socket can be created
 --   with 'accept' as an emulation of TCP.
-data ServerSocket = ServerSocket Socket SockAddr Bool -- wildcard or not
+data ListenScoket = ListenScoket Socket SockAddr Bool -- wildcard or not
                   deriving (Eq, Show)
 
 -- | A connected UDP socket which are used with 'recv' and 'send'.
-newtype ConnectedSocket = ConnectedSocket Socket deriving (Eq, Show)
+newtype ServerSocket = ServerSocket Socket deriving (Eq, Show)
 
 -- | A client socket address from the server point of view.
 data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
@@ -88,8 +88,8 @@ data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
 ----------------------------------------------------------------
 
 -- | Creating a listening UDP socket.
-serverSocket :: (IP, PortNumber) -> IO ServerSocket
-serverSocket ip = E.bracketOnError open NS.close $ \s -> do
+listenSocket :: (IP, PortNumber) -> IO ListenScoket
+listenSocket ip = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
 #if !defined(openbsd_HOST_OS)
@@ -101,9 +101,9 @@ serverSocket ip = E.bracketOnError open NS.close $ \s -> do
         let opt = case sa of
               SockAddrInet{}  -> RecvIPv4PktInfo
               SockAddrInet6{} -> RecvIPv6PktInfo
-              _               -> error "serverSocket"
+              _               -> error "listenSocket"
         setSocketOption s opt 1
-    return $ ServerSocket s sa wildcard
+    return $ ListenScoket s sa wildcard
   where
     sa     = toSockAddr ip
     family = sockAddrFamily sa
@@ -114,8 +114,8 @@ serverSocket ip = E.bracketOnError open NS.close $ \s -> do
 -- | Receiving data with a listening UDP socket.
 --   For a wildcard socket, recvmsg() is called.
 --   For an interface specific socket, recvfrom() is called.
-recvMsg :: ServerSocket -> IO (ByteString, ClientSockAddr)
-recvMsg (ServerSocket s _ wildcard)
+recvMsg :: ListenScoket -> IO (ByteString, ClientSockAddr)
+recvMsg (ListenScoket s _ wildcard)
   | wildcard = do
         (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
         return (bs,ClientSockAddr sa cmsg)
@@ -126,16 +126,16 @@ recvMsg (ServerSocket s _ wildcard)
 -- | Sending data with a listening UDP socket.
 --   For a wildcard socket, sendmsg() is called.
 --   For an interface specific socket, sento() is called.
-sendMsg :: ServerSocket -> ByteString -> ClientSockAddr -> IO ()
-sendMsg (ServerSocket s _ wildcard) bs (ClientSockAddr sa cmsgs)
+sendMsg :: ListenScoket -> ByteString -> ClientSockAddr -> IO ()
+sendMsg (ListenScoket s _ wildcard) bs (ClientSockAddr sa cmsgs)
   | wildcard  = void $ NSB.sendMsg s sa [bs] cmsgs 0
   | otherwise = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
 -- | Creating a connected UDP socket like TCP's accept().
-accept :: ServerSocket -> ClientSockAddr -> IO ConnectedSocket
-accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
+accept :: ListenScoket -> ClientSockAddr -> IO ServerSocket
+accept (ListenScoket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
     let mysa' | isAnySockAddr mysa = mysa
@@ -147,7 +147,7 @@ accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open
     -- So, bind may results in EADDRINUSE
        `E.catch` postphone (bind s mysa')
     connect s peersa  -- (UDP, 127.0.0.1:443, pa:pp)
-    return $ ConnectedSocket s
+    return $ ServerSocket s
   where
     postphone action e
       | E.ioeGetErrorType e == E.ResourceBusy = threadDelay 10000 >> action
@@ -160,23 +160,23 @@ accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open
 -- | Sending data with a connected UDP socket.
 --   Faster than other the send functions since
 --   the socket is connected.
-send :: ConnectedSocket -> ByteString -> IO ()
-send (ConnectedSocket s) bs = void $ NSB.send s bs
+send :: ServerSocket -> ByteString -> IO ()
+send (ServerSocket s) bs = void $ NSB.send s bs
 
 -- | Receiving data with a connected UDP socket.
-recv :: ConnectedSocket -> IO ByteString
-recv (ConnectedSocket s) = R.recv s properUDPSize
+recv :: ServerSocket -> IO ByteString
+recv (ServerSocket s) = R.recv s properUDPSize
 
-sendBuf :: ConnectedSocket -> (Ptr a -> Int -> IO ())
+sendBuf :: ServerSocket -> (Ptr a -> Int -> IO ())
 sendBuf = undefined
 
-recvBuf :: ConnectedSocket -> (Ptr a -> Int -> IO Int)
+recvBuf :: ServerSocket -> (Ptr a -> Int -> IO Int)
 recvBuf = undefined
 
 ----------------------------------------------------------------
 
-stop :: ServerSocket -> IO ()
-stop (ServerSocket s _ _) = NS.close s
+stop :: ListenScoket -> IO ()
+stop (ListenScoket s _ _) = NS.close s
 
-close :: ConnectedSocket -> IO ()
-close (ConnectedSocket s) = NS.close s
+close :: ServerSocket -> IO ()
+close (ServerSocket s) = NS.close s
