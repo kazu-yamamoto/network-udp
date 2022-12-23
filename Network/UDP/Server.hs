@@ -8,7 +8,8 @@
 --   * Type-safe APIs.
 --   * TCP-like APIs (creating a UDP connection from a listing socket).
 --
---   'Network.Socket.ByteString.recv' families use 'createAndTrim'
+--   The 'Network.Socket.ByteString.recv' family in
+--   "Network.Socket.ByteString" uses 'createAndTrim'
 --   internaly.  So, one buffer is allocated before corresponding
 --   system calls are called. Then another buffer is allocated
 --   according to the input size and the input is copied.
@@ -67,7 +68,7 @@ isAnySockAddr _                               = False
 -- | A listening socket for UDP which can be used
 --   for 'recvMsg' and 'sendMsg'.
 --   Optionally, a connected UDP socket can be created
---   with 'connectedSocket' as an emulation of TCP's accept().
+--   with 'accept' as an emulation of TCP.
 data ServerSocket = ServerSocket Socket SockAddr Bool -- wildcard or not
                   deriving (Eq, Show)
 
