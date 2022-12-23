@@ -26,7 +26,7 @@
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2022/02/25/153122
 module Network.UDP.Server (
   -- * Wildcard socket
-    ListenScoket(..)
+    ListenSocket(..)
   , listenSocket
   , ClientSockAddr(..)
   , recvFrom
@@ -76,7 +76,7 @@ isAnySockAddr _                               = False
 --   for 'recvFrom' and 'sendTo'.
 --   Optionally, a connected UDP socket can be created
 --   with 'accept' as an emulation of TCP.
-data ListenScoket = ListenScoket Socket SockAddr Bool -- wildcard or not
+data ListenSocket = ListenSocket Socket SockAddr Bool -- wildcard or not
                   deriving (Eq, Show)
 
 -- | A connected UDP socket which are used with 'recv' and 'send'.
@@ -88,7 +88,7 @@ data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
 ----------------------------------------------------------------
 
 -- | Creating a listening UDP socket.
-listenSocket :: (IP, PortNumber) -> IO ListenScoket
+listenSocket :: (IP, PortNumber) -> IO ListenSocket
 listenSocket ip = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
@@ -103,7 +103,7 @@ listenSocket ip = E.bracketOnError open NS.close $ \s -> do
               SockAddrInet6{} -> RecvIPv6PktInfo
               _               -> error "listenSocket"
         setSocketOption s opt 1
-    return $ ListenScoket s sa wildcard
+    return $ ListenSocket s sa wildcard
   where
     sa     = toSockAddr ip
     family = sockAddrFamily sa
@@ -114,8 +114,8 @@ listenSocket ip = E.bracketOnError open NS.close $ \s -> do
 -- | Receiving data with a listening UDP socket.
 --   For a wildcard socket, recvmsg() is called.
 --   For an interface specific socket, recvfrom() is called.
-recvFrom :: ListenScoket -> IO (ByteString, ClientSockAddr)
-recvFrom (ListenScoket s _ wildcard)
+recvFrom :: ListenSocket -> IO (ByteString, ClientSockAddr)
+recvFrom (ListenSocket s _ wildcard)
   | wildcard = do
         (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
         return (bs,ClientSockAddr sa cmsg)
@@ -126,16 +126,16 @@ recvFrom (ListenScoket s _ wildcard)
 -- | Sending data with a listening UDP socket.
 --   For a wildcard socket, sendmsg() is called.
 --   For an interface specific socket, sento() is called.
-sendTo :: ListenScoket -> ByteString -> ClientSockAddr -> IO ()
-sendTo (ListenScoket s _ wildcard) bs (ClientSockAddr sa cmsgs)
+sendTo :: ListenSocket -> ByteString -> ClientSockAddr -> IO ()
+sendTo (ListenSocket s _ wildcard) bs (ClientSockAddr sa cmsgs)
   | wildcard  = void $ NSB.sendMsg s sa [bs] cmsgs 0
   | otherwise = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
 -- | Creating a connected UDP socket like TCP's accept().
-accept :: ListenScoket -> ClientSockAddr -> IO ServerSocket
-accept (ListenScoket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
+accept :: ListenSocket -> ClientSockAddr -> IO ServerSocket
+accept (ListenSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
     let mysa' | isAnySockAddr mysa = mysa
@@ -175,8 +175,8 @@ recvBuf = undefined
 
 ----------------------------------------------------------------
 
-stop :: ListenScoket -> IO ()
-stop (ListenScoket s _ _) = NS.close s
+stop :: ListenSocket -> IO ()
+stop (ListenSocket s _ _) = NS.close s
 
 close :: ServerSocket -> IO ()
 close (ServerSocket s) = NS.close s
