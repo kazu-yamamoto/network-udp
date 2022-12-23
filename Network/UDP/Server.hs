@@ -35,7 +35,12 @@ module Network.UDP.Server (
   , ConnectedSocket(..)
   , accept
   , recv
+  , recvBuf
   , send
+  , sendBuf
+  -- * Closing
+  , stop
+  , close
   ) where
 
 import Control.Concurrent
@@ -43,8 +48,10 @@ import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
+import Foreign.Ptr (Ptr)
 import qualified GHC.IO.Exception as E
-import Network.Socket hiding (accept)
+import qualified Network.Socket as NS
+import Network.Socket hiding (accept, close, sendBuf, recvBuf)
 import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 
@@ -82,7 +89,7 @@ data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
 
 -- | Creating a listening UDP socket.
 serverSocket :: (IP, PortNumber) -> IO ServerSocket
-serverSocket ip = E.bracketOnError open close $ \s -> do
+serverSocket ip = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
 #if !defined(openbsd_HOST_OS)
@@ -90,6 +97,12 @@ serverSocket ip = E.bracketOnError open close $ \s -> do
 #endif
     bind s sa
     let wildcard = isAnySockAddr sa
+    when wildcard $ do
+        let opt = case sa of
+              SockAddrInet{}  -> RecvIPv4PktInfo
+              SockAddrInet6{} -> RecvIPv6PktInfo
+              _               -> error "serverSocket"
+        setSocketOption s opt 1
     return $ ServerSocket s sa wildcard
   where
     sa     = toSockAddr ip
@@ -122,7 +135,7 @@ sendMsg (ServerSocket s _ wildcard) bs (ClientSockAddr sa cmsgs)
 
 -- | Creating a connected UDP socket like TCP's accept().
 accept :: ServerSocket -> ClientSockAddr -> IO ConnectedSocket
-accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open close $ \s -> do
+accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
     let mysa' | isAnySockAddr mysa = mysa
@@ -153,3 +166,17 @@ send (ConnectedSocket s) bs = void $ NSB.send s bs
 -- | Receiving data with a connected UDP socket.
 recv :: ConnectedSocket -> IO ByteString
 recv (ConnectedSocket s) = R.recv s properUDPSize
+
+sendBuf :: ConnectedSocket -> (Ptr a -> Int -> IO ())
+sendBuf = undefined
+
+recvBuf :: ConnectedSocket -> (Ptr a -> Int -> IO Int)
+recvBuf = undefined
+
+----------------------------------------------------------------
+
+stop :: ServerSocket -> IO ()
+stop (ServerSocket s _ _) = NS.close s
+
+close :: ConnectedSocket -> IO ()
+close (ConnectedSocket s) = NS.close s

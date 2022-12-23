@@ -8,11 +8,13 @@ module Network.UDP.Client (
   -- * Client socket
     ClientSocket(..)
   , clientSocket
-  -- * IO
+  -- * Sending and receiving
   , send
   , sendBuf
   , recv
   , recvBuf
+  -- * Closing
+  , close
   -- * NAT rebinding
   , natRebinding
   ) where
@@ -20,8 +22,8 @@ module Network.UDP.Client (
 import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString (ByteString)
+import Network.Socket (Socket, SockAddr, HostName, ServiceName, SocketType(..),AddrInfo(..))
 import qualified Network.Socket as NS
-import Network.Socket hiding (connect, sendBuf, recvBuf)
 import qualified Network.Socket.ByteString as NSB
 import Foreign.Ptr (Ptr)
 
@@ -34,13 +36,13 @@ data ClientSocket = ClientSocket Socket SockAddr Bool -- connected or not
 -- | Creating a unconnected UDP socket.
 clientSocket :: HostName -> ServiceName -> Bool -> IO ClientSocket
 clientSocket host port conn = do
-    addr <- head <$> getAddrInfo (Just hints) (Just host) (Just port)
-    E.bracketOnError (openSocket addr) close $ \s -> do
+    addr <- head <$> NS.getAddrInfo (Just hints) (Just host) (Just port)
+    E.bracketOnError (NS.openSocket addr) NS.close $ \s -> do
         let sa = addrAddress addr
         when conn $ NS.connect s sa
         return $ ClientSocket s sa conn
  where
-    hints = defaultHints { addrSocketType = Datagram }
+    hints = NS.defaultHints { addrSocketType = Datagram }
 
 send :: ClientSocket -> (ByteString -> IO ())
 send (ClientSocket s sa conn)
@@ -62,12 +64,15 @@ sendBuf = undefined
 recvBuf :: ClientSocket -> (Ptr a -> Int -> IO Int)
 recvBuf = undefined
 
+close :: ClientSocket -> IO ()
+close (ClientSocket s _ _) = NS.close s
+
 -- | Emulation of NAT rebiding in the client side.
 --   This is mainly used for test purposes.
 natRebinding :: ClientSocket -> IO ClientSocket
-natRebinding (ClientSocket _ sa conn) = E.bracketOnError open close $ \s -> do
+natRebinding (ClientSocket _ sa conn) = E.bracketOnError open NS.close $ \s -> do
     when conn $ NS.connect s sa
     return $ ClientSocket s sa conn
   where
     family = sockAddrFamily sa
-    open = socket family Datagram defaultProtocol
+    open = NS.socket family Datagram NS.defaultProtocol
