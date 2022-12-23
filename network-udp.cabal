@@ -20,8 +20,7 @@ Source-Repository head
 ----------------------------------------------------------------
 
 library
-  exposed-modules:     Network.UDP.Client
-                       Network.UDP.Server
+  exposed-modules:     Network.UDP
   other-modules:       Network.UDP.Recv
                        Network.UDP.Types
   build-depends:       base >= 4.9 && < 5

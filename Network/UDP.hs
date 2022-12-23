@@ -1,5 +1,6 @@
 {-# LANGUAGE CPP #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE RecordWildCards #-}
 
 -- | Best current practice library for UDP servers.
 --
@@ -24,23 +25,32 @@
 --   To know the background of TCP-like APIs, see:
 --
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2022/02/25/153122
-module Network.UDP.Server (
-  -- * Wildcard socket
-    ListenSocket(..)
-  , listenSocket
-  , ClientSockAddr(..)
-  , recvFrom
-  , sendTo
-  -- * Connected socket
-  , ServerSocket(..)
-  , accept
+--
+--   To know the background of the client side, see:
+--
+--   * https://kazu-yamamoto.hatenablog.jp/entry/2021/06/29/134930
+--   * https://www.iij.ad.jp/en/dev/iir/pdf/iir_vol52_focus2_EN.pdf (Sec 3.9)
+module Network.UDP (
+  -- * Client's socket
+    UDPSocket(..)
+  , clientSocket
   , recv
   , recvBuf
   , send
   , sendBuf
+  -- * Server's wildcard socket
+  , ListenSocket(..)
+  , serverSocket
+  , ClientSockAddr(..)
+  , recvFrom
+  , sendTo
+  -- * Server's connected socket
+  , accept
   -- * Closing
   , stop
   , close
+  -- * Misc
+  , natRebinding
   ) where
 
 import Control.Concurrent
@@ -76,11 +86,18 @@ isAnySockAddr _                               = False
 --   for 'recvFrom' and 'sendTo'.
 --   Optionally, a connected UDP socket can be created
 --   with 'accept' as an emulation of TCP.
-data ListenSocket = ListenSocket Socket SockAddr Bool -- wildcard or not
-                  deriving (Eq, Show)
+data ListenSocket = ListenSocket {
+    listenSocket :: Socket
+  , mySockAddr   :: SockAddr
+  , wildcard     :: Bool
+  } deriving (Eq, Show)
 
--- | A connected UDP socket which are used with 'recv' and 'send'.
-newtype ServerSocket = ServerSocket Socket deriving (Eq, Show)
+-- | A UDP socket which are used with 'recv' and 'send'.
+data UDPSocket = UDPSocket {
+    udpSocket    :: Socket
+  , peerSockAddr :: SockAddr
+  , connected    :: Bool
+  } deriving (Eq, Show)
 
 -- | A client socket address from the server point of view.
 data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
@@ -88,22 +105,22 @@ data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
 ----------------------------------------------------------------
 
 -- | Creating a listening UDP socket.
-listenSocket :: (IP, PortNumber) -> IO ListenSocket
-listenSocket ip = E.bracketOnError open NS.close $ \s -> do
+serverSocket :: (IP, PortNumber) -> IO ListenSocket
+serverSocket ip = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
 #if !defined(openbsd_HOST_OS)
     when (family == AF_INET6) $ setSocketOption s IPv6Only 1
 #endif
     bind s sa
-    let wildcard = isAnySockAddr sa
-    when wildcard $ do
+    let wild = isAnySockAddr sa
+    when wild $ do
         let opt = case sa of
               SockAddrInet{}  -> RecvIPv4PktInfo
               SockAddrInet6{} -> RecvIPv6PktInfo
-              _               -> error "listenSocket"
+              _               -> error "serverSocket"
         setSocketOption s opt 1
-    return $ ListenSocket s sa wildcard
+    return $ ListenSocket s sa wild
   where
     sa     = toSockAddr ip
     family = sockAddrFamily sa
@@ -115,31 +132,31 @@ listenSocket ip = E.bracketOnError open NS.close $ \s -> do
 --   For a wildcard socket, recvmsg() is called.
 --   For an interface specific socket, recvfrom() is called.
 recvFrom :: ListenSocket -> IO (ByteString, ClientSockAddr)
-recvFrom (ListenSocket s _ wildcard)
+recvFrom ListenSocket{..}
   | wildcard = do
-        (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
-        return (bs,ClientSockAddr sa cmsg)
+        (bs,sa,cmsg,_) <- R.recvMsg listenSocket properUDPSize properCMSGSize 0
+        return (bs, ClientSockAddr sa cmsg)
   | otherwise = do
-        (bs,sa) <- R.recvFrom s properUDPSize
-        return (bs,ClientSockAddr sa [])
+        (bs,sa) <- R.recvFrom listenSocket properUDPSize
+        return (bs, ClientSockAddr sa [])
 
 -- | Sending data with a listening UDP socket.
 --   For a wildcard socket, sendmsg() is called.
 --   For an interface specific socket, sento() is called.
 sendTo :: ListenSocket -> ByteString -> ClientSockAddr -> IO ()
-sendTo (ListenSocket s _ wildcard) bs (ClientSockAddr sa cmsgs)
-  | wildcard  = void $ NSB.sendMsg s sa [bs] cmsgs 0
-  | otherwise = void $ NSB.sendTo s bs sa
+sendTo ListenSocket{..} bs (ClientSockAddr sa cmsgs)
+  | wildcard  = void $ NSB.sendMsg listenSocket sa [bs] cmsgs 0
+  | otherwise = void $ NSB.sendTo  listenSocket bs sa
 
 ----------------------------------------------------------------
 
 -- | Creating a connected UDP socket like TCP's accept().
-accept :: ListenSocket -> ClientSockAddr -> IO ServerSocket
-accept (ListenSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
+accept :: ListenSocket -> ClientSockAddr -> IO UDPSocket
+accept ListenSocket{..} (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
-    let mysa' | isAnySockAddr mysa = mysa
-              | otherwise          = anySockAddr mysa
+    let mysa' | isAnySockAddr mySockAddr = mySockAddr
+              | otherwise                = anySockAddr mySockAddr
     -- wildcard:  (UDP, *.443, *:*) -> (UDP, 127.0.0.1:443, *:*)
     -- otherwise: (UDP, 127.0.0.1:443, *:*) -> (UDP, *:443, *:*)
     bind s mysa'
@@ -147,36 +164,59 @@ accept (ListenSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open
     -- So, bind may results in EADDRINUSE
        `E.catch` postphone (bind s mysa')
     connect s peersa  -- (UDP, 127.0.0.1:443, pa:pp)
-    return $ ServerSocket s
+    return $ UDPSocket s peersa True
   where
     postphone action e
       | E.ioeGetErrorType e == E.ResourceBusy = threadDelay 10000 >> action
       | otherwise                             = E.throwIO e
-    family = sockAddrFamily mysa
+    family = sockAddrFamily mySockAddr
     open   = socket family Datagram defaultProtocol
 
 ----------------------------------------------------------------
 
--- | Sending data with a connected UDP socket.
---   Faster than other the send functions since
---   the socket is connected.
-send :: ServerSocket -> ByteString -> IO ()
-send (ServerSocket s) bs = void $ NSB.send s bs
+-- | Creating a unconnected UDP socket.
+clientSocket :: HostName -> ServiceName -> Bool -> IO UDPSocket
+clientSocket host port conn = do
+    addr <- head <$> NS.getAddrInfo (Just hints) (Just host) (Just port)
+    E.bracketOnError (NS.openSocket addr) NS.close $ \s -> do
+        let sa = addrAddress addr
+        when conn $ NS.connect s sa
+        return $ UDPSocket s sa conn
+ where
+    hints = NS.defaultHints { addrSocketType = Datagram }
 
--- | Receiving data with a connected UDP socket.
-recv :: ServerSocket -> IO ByteString
-recv (ServerSocket s) = R.recv s properUDPSize
+send :: UDPSocket -> (ByteString -> IO ())
+send (UDPSocket s sa conn)
+  | conn      = \bs -> void $ NSB.send s bs
+  | otherwise = \bs -> void $ NSB.sendTo s bs sa
 
-sendBuf :: ServerSocket -> (Ptr a -> Int -> IO ())
+recv :: UDPSocket -> IO ByteString
+recv (UDPSocket s sa conn)
+  | conn      = R.recv s properUDPSize
+  | otherwise = go
+  where
+    go = do
+        (bs, sa') <- R.recvFrom s properUDPSize
+        if sa == sa' then return bs else go
+
+sendBuf :: UDPSocket -> (Ptr a -> Int -> IO ())
 sendBuf = undefined
 
-recvBuf :: ServerSocket -> (Ptr a -> Int -> IO Int)
+recvBuf :: UDPSocket -> (Ptr a -> Int -> IO Int)
 recvBuf = undefined
-
-----------------------------------------------------------------
 
 stop :: ListenSocket -> IO ()
 stop (ListenSocket s _ _) = NS.close s
 
-close :: ServerSocket -> IO ()
-close (ServerSocket s) = NS.close s
+close :: UDPSocket -> IO ()
+close (UDPSocket s _ _) = NS.close s
+
+-- | Emulation of NAT rebiding in the client side.
+--   This is mainly used for test purposes.
+natRebinding :: UDPSocket -> IO UDPSocket
+natRebinding (UDPSocket _ sa conn) = E.bracketOnError open NS.close $ \s -> do
+    when conn $ NS.connect s sa
+    return $ UDPSocket s sa conn
+  where
+    family = sockAddrFamily sa
+    open = NS.socket family Datagram NS.defaultProtocol
