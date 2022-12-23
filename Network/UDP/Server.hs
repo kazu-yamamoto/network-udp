@@ -25,15 +25,14 @@
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2022/02/25/153122
 module Network.UDP.Server (
   -- * Wildcard socket
-    ListenSocket
-  , listenSocket
-  , ServerSockAddr
-  , ClientSockAddr
+    ServerSocket(..)
+  , serverSocket
+  , ClientSockAddr(..)
   , recvMsg
   , sendMsg
   -- * Connected socket
-  , ConnectedSocket
-  , connectedSocket
+  , ConnectedSocket(..)
+  , accept
   , recv
   , send
   ) where
@@ -44,7 +43,7 @@ import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
 import qualified GHC.IO.Exception as E
-import Network.Socket
+import Network.Socket hiding (accept)
 import qualified Network.Socket.ByteString as NSB
 import qualified System.IO.Error as E
 
@@ -69,26 +68,20 @@ isAnySockAddr _                               = False
 --   for 'recvMsg' and 'sendMsg'.
 --   Optionally, a connected UDP socket can be created
 --   with 'connectedSocket' as an emulation of TCP's accept().
-data ListenSocket = Wildcard Socket
-                  | InterfaceSpecific Socket
+data ServerSocket = ServerSocket Socket SockAddr Bool -- wildcard or not
                   deriving (Eq, Show)
 
 -- | A connected UDP socket which are used with 'recv' and 'send'.
 newtype ConnectedSocket = ConnectedSocket Socket deriving (Eq, Show)
 
-----------------------------------------------------------------
-
--- | A server socket address from the client point of view.
-newtype ServerSockAddr = ServerSockAddr SockAddr deriving (Eq, Show)
-
 -- | A client socket address from the server point of view.
-newtype ClientSockAddr = ClientSockAddr SockAddr deriving (Eq, Show)
+data ClientSockAddr = ClientSockAddr SockAddr [Cmsg] deriving (Eq, Show)
 
 ----------------------------------------------------------------
 
 -- | Creating a listening UDP socket.
-listenSocket :: (IP, PortNumber) -> IO (ListenSocket, ServerSockAddr)
-listenSocket ip = E.bracketOnError open close $ \s -> do
+serverSocket :: (IP, PortNumber) -> IO ServerSocket
+serverSocket ip = E.bracketOnError open close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
 #if !defined(openbsd_HOST_OS)
@@ -96,9 +89,7 @@ listenSocket ip = E.bracketOnError open close $ \s -> do
 #endif
     bind s sa
     let wildcard = isAnySockAddr sa
-        sock | wildcard  = Wildcard s
-             | otherwise = InterfaceSpecific s
-    return (sock,ServerSockAddr sa)
+    return $ ServerSocket s sa wildcard
   where
     sa     = toSockAddr ip
     family = sockAddrFamily sa
@@ -109,28 +100,28 @@ listenSocket ip = E.bracketOnError open close $ \s -> do
 -- | Receiving data with a listening UDP socket.
 --   For a wildcard socket, recvmsg() is called.
 --   For an interface specific socket, recvfrom() is called.
-recvMsg :: ListenSocket -> IO (ByteString, ClientSockAddr, [Cmsg])
-recvMsg (Wildcard s) = do
-    (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
-    return (bs,ClientSockAddr sa,cmsg)
-recvMsg (InterfaceSpecific s) = do
-    (bs,sa) <- R.recvFrom s properUDPSize
-    return (bs,ClientSockAddr sa,[])
+recvMsg :: ServerSocket -> IO (ByteString, ClientSockAddr)
+recvMsg (ServerSocket s _ wildcard)
+  | wildcard = do
+        (bs,sa,cmsg,_) <- R.recvMsg s properUDPSize properCMSGSize 0
+        return (bs,ClientSockAddr sa cmsg)
+  | otherwise = do
+        (bs,sa) <- R.recvFrom s properUDPSize
+        return (bs,ClientSockAddr sa [])
 
 -- | Sending data with a listening UDP socket.
 --   For a wildcard socket, sendmsg() is called.
 --   For an interface specific socket, sento() is called.
-sendMsg :: ListenSocket -> ByteString -> ClientSockAddr -> [Cmsg] -> IO ()
-sendMsg (Wildcard s) bs (ClientSockAddr sa) cmsgs =
-    void $ NSB.sendMsg s sa [bs] cmsgs 0
-sendMsg (InterfaceSpecific s) bs (ClientSockAddr sa) _ =
-    void $ NSB.sendTo s bs sa
+sendMsg :: ServerSocket -> ByteString -> ClientSockAddr -> IO ()
+sendMsg (ServerSocket s _ wildcard) bs (ClientSockAddr sa cmsgs)
+  | wildcard  = void $ NSB.sendMsg s sa [bs] cmsgs 0
+  | otherwise = void $ NSB.sendTo s bs sa
 
 ----------------------------------------------------------------
 
 -- | Creating a connected UDP socket like TCP's accept().
-connectedSocket :: ServerSockAddr -> ClientSockAddr -> IO ConnectedSocket
-connectedSocket (ServerSockAddr mysa) (ClientSockAddr peersa) = E.bracketOnError open close $ \s -> do
+accept :: ServerSocket -> ClientSockAddr -> IO ConnectedSocket
+accept (ServerSocket _ mysa _) (ClientSockAddr peersa _) = E.bracketOnError open close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
     let mysa' | isAnySockAddr mysa = mysa

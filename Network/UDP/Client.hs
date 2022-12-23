@@ -28,7 +28,7 @@ import Foreign.Ptr (Ptr)
 import Network.UDP.Types
 import qualified Network.UDP.Recv as R
 
-data ClientSocket = ClientSocket Socket SockAddr Bool
+data ClientSocket = ClientSocket Socket SockAddr Bool -- connected or not
                   deriving (Eq, Show)
 
 -- | Creating a unconnected UDP socket.
