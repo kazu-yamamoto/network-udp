@@ -150,5 +150,5 @@ send :: ConnectedSocket -> ByteString -> IO ()
 send (ConnectedSocket s) bs = void $ NSB.send s bs
 
 -- | Receiving data with a connected UDP socket.
-recv :: ConnectedSocket -> Int -> IO ByteString
-recv (ConnectedSocket s) = R.recv s
+recv :: ConnectedSocket -> IO ByteString
+recv (ConnectedSocket s) = R.recv s properUDPSize
