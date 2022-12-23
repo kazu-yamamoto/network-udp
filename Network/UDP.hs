@@ -58,6 +58,7 @@ import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
+import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import qualified GHC.IO.Exception as E
 import qualified Network.Socket as NS
@@ -185,29 +186,45 @@ clientSocket host port conn = do
  where
     hints = NS.defaultHints { addrSocketType = Datagram }
 
+-- | Sending data with a UDP socket.
+--   If the socket is connected, send() is called.
+--   Otherwise, sento() is called.
 send :: UDPSocket -> (ByteString -> IO ())
-send (UDPSocket s sa conn)
-  | conn      = \bs -> void $ NSB.send s bs
-  | otherwise = \bs -> void $ NSB.sendTo s bs sa
+send UDPSocket{..}
+  | connected = \bs -> void $ NSB.send   udpSocket bs
+  | otherwise = \bs -> void $ NSB.sendTo udpSocket bs peerSockAddr
 
+-- | Receiving data with a UDP socket.
+--   If the socket is connected, recv() is called.
+--   Otherwise, recvfrom() is called.
 recv :: UDPSocket -> IO ByteString
-recv (UDPSocket s sa conn)
-  | conn      = R.recv s properUDPSize
+recv UDPSocket{..}
+  | connected = R.recv udpSocket properUDPSize
   | otherwise = go
   where
     go = do
-        (bs, sa') <- R.recvFrom s properUDPSize
-        if sa == sa' then return bs else go
+        (bs, sa) <- R.recvFrom udpSocket properUDPSize
+        if sa == peerSockAddr then return bs else go
 
-sendBuf :: UDPSocket -> (Ptr a -> Int -> IO ())
-sendBuf = undefined
+sendBuf :: UDPSocket -> (Ptr Word8 -> Int -> IO ())
+sendBuf UDPSocket{..} ptr siz
+  | connected = void $ NS.sendBuf   udpSocket ptr siz
+  | otherwise = void $ NS.sendBufTo udpSocket ptr siz peerSockAddr
 
-recvBuf :: UDPSocket -> (Ptr a -> Int -> IO Int)
-recvBuf = undefined
+recvBuf :: UDPSocket -> (Ptr Word8 -> Int -> IO Int)
+recvBuf UDPSocket{..} ptr siz
+  | connected = NS.recvBuf   udpSocket ptr siz
+  | otherwise = go
+  where
+    go = do
+        (len,sa) <- NS.recvBufFrom udpSocket ptr siz
+        if sa == peerSockAddr then return len else go
 
+-- | Closing a socket.
 stop :: ListenSocket -> IO ()
 stop (ListenSocket s _ _) = NS.close s
 
+-- | Closing a socket.
 close :: UDPSocket -> IO ()
 close (UDPSocket s _ _) = NS.close s
 
