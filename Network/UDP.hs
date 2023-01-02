@@ -22,11 +22,11 @@
 --   This library uses 2,048 for the buffer size. This size ensures
 --   no global locking when allocating 'ByteString' (i.e. a buffer).
 --
---   To know the background of TCP-like APIs, see:
+--   To know the background of TCP-like API in the server side, see:
 --
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2022/02/25/153122
 --
---   To know the background of the client side, see:
+--   To know the background of auto migration in the client side, see:
 --
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2021/06/29/134930
 --   * https://www.iij.ad.jp/en/dev/iir/pdf/iir_vol52_focus2_EN.pdf (Sec 3.9)
