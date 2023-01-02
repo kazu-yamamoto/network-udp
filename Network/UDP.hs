@@ -2,7 +2,7 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 
--- | Best current practice library for UDP servers.
+-- | Best current practice library for UDP clients and servers.
 --
 --   * Efficient receiving function without memory copy.
 --   * Proper buffer size.
@@ -31,7 +31,7 @@
 --   * https://kazu-yamamoto.hatenablog.jp/entry/2021/06/29/134930
 --   * https://www.iij.ad.jp/en/dev/iir/pdf/iir_vol52_focus2_EN.pdf (Sec 3.9)
 module Network.UDP (
-  -- * Client's socket
+  -- * Sockets used by clients and servers after accept
     UDPSocket(..)
   , clientSocket
   , recv
@@ -90,13 +90,13 @@ isAnySockAddr _                               = False
 data ListenSocket = ListenSocket {
     listenSocket :: Socket
   , mySockAddr   :: SockAddr
-  , wildcard     :: Bool
+  , wildcard     :: Bool -- ^ 'True' for wildcard. 'False' for interface-specific.
   } deriving (Eq, Show)
 
 -- | A UDP socket which are used with 'recv' and 'send'.
 data UDPSocket = UDPSocket {
     udpSocket    :: Socket
-  , peerSockAddr :: SockAddr
+  , peerSockAddr :: SockAddr -- ^ Used for a unconnected socket naturally. Used for a connected sockdet for checking
   , connected    :: Bool
   } deriving (Eq, Show)
 
@@ -156,8 +156,8 @@ accept :: ListenSocket -> ClientSockAddr -> IO UDPSocket
 accept ListenSocket{..} (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
-    let mysa' | isAnySockAddr mySockAddr = mySockAddr
-              | otherwise                = anySockAddr mySockAddr
+    let mysa' | wildcard  = mySockAddr
+              | otherwise = anySockAddr mySockAddr
     -- wildcard:  (UDP, *.443, *:*) -> (UDP, 127.0.0.1:443, *:*)
     -- otherwise: (UDP, 127.0.0.1:443, *:*) -> (UDP, *:443, *:*)
     bind s mysa'
