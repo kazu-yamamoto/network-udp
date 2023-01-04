@@ -4,10 +4,11 @@
 
 -- | Best current practice library for UDP clients and servers.
 --
---   * Efficient receiving function without memory copy.
---   * Proper buffer size.
---   * Type-safe APIs.
---   * TCP-like APIs (creating a UDP connection from a listing socket).
+--   * Efficient receiving function without memory copy
+--   * Proper buffer size
+--   * Type-safe APIs
+--   * TCP-like APIs (creating a UDP connection from a listing socket) in the server side
+--   * Auto migration (network interface selection) in the client side
 --
 --   The 'Network.Socket.ByteString.recv' family in
 --   "Network.Socket.ByteString" uses 'createAndTrim'
