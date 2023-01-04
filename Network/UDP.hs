@@ -58,6 +58,7 @@ import qualified Control.Exception as E
 import Control.Monad
 import Data.ByteString (ByteString)
 import Data.IP hiding (addr)
+import Data.Maybe (fromJust)
 import Data.Word (Word8)
 import Foreign.Ptr (Ptr)
 import qualified GHC.IO.Exception as E
@@ -116,10 +117,7 @@ serverSocket ip = E.bracketOnError open NS.close $ \s -> do
     bind s sa
     let wild = isAnySockAddr sa
     when wild $ do
-        let opt = case sa of
-              SockAddrInet{}  -> RecvIPv4PktInfo
-              SockAddrInet6{} -> RecvIPv6PktInfo
-              _               -> error "serverSocket"
+        let opt = decideOption sa
         setSocketOption s opt 1
     return $ ListenSocket s sa wild
   where
@@ -153,10 +151,10 @@ sendTo ListenSocket{..} bs (ClientSockAddr sa cmsgs)
 
 -- | Creating a connected UDP socket like TCP's accept().
 accept :: ListenSocket -> ClientSockAddr -> IO UDPSocket
-accept ListenSocket{..} (ClientSockAddr peersa _) = E.bracketOnError open NS.close $ \s -> do
+accept ListenSocket{..} (ClientSockAddr peersa cmsgs) = E.bracketOnError open NS.close $ \s -> do
     setSocketOption s ReuseAddr 1
     withFdSocket s setCloseOnExecIfNeeded
-    let mysa' | wildcard  = mySockAddr
+    let mysa' | wildcard  = getMySockAddr mySockAddr cmsgs
               | otherwise = anySockAddr mySockAddr
     -- wildcard:  (UDP, *.443, *:*) -> (UDP, 127.0.0.1:443, *:*)
     -- otherwise: (UDP, 127.0.0.1:443, *:*) -> (UDP, *:443, *:*)
@@ -243,3 +241,22 @@ natRebinding (UDPSocket _ sa conn) = E.bracketOnError open NS.close $ \s -> do
   where
     family = sockAddrFamily sa
     open = NS.socket family Datagram NS.defaultProtocol
+
+----------------------------------------------------------------
+
+decideOption :: SockAddr -> SocketOption
+decideOption SockAddrInet{}  = RecvIPv4PktInfo
+decideOption SockAddrInet6{} = RecvIPv6PktInfo
+decideOption _               = error "decideOption"
+
+-- | Obtaining my sockaddr for a wildcard socket from cmsgs.
+getMySockAddr :: SockAddr -> [Cmsg] -> SockAddr
+getMySockAddr (SockAddrInet p _) cmsgs = SockAddrInet p addr
+  where
+    pktinfo = fromJust $ lookupCmsg CmsgIdIPv4PktInfo cmsgs
+    IPv4PktInfo _ _ addr = fromJust $ decodeCmsg pktinfo
+getMySockAddr (SockAddrInet6 p f _ sc) cmsgs = SockAddrInet6 p f addr sc
+  where
+    pktinfo = fromJust $ lookupCmsg CmsgIdIPv6PktInfo cmsgs
+    IPv6PktInfo _ addr = fromJust $ decodeCmsg pktinfo
+getMySockAddr _ _ = error "getMySockAddr"
