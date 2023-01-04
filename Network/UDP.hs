@@ -206,11 +206,17 @@ recv UDPSocket{..}
         (bs, sa) <- R.recvFrom udpSocket properUDPSize
         if sa == peerSockAddr then return bs else go
 
+-- | Sending data in a buffer with a UDP socket.
+--   If the socket is connected, send() is called.
+--   Otherwise, sento() is called.
 sendBuf :: UDPSocket -> (Ptr Word8 -> Int -> IO ())
 sendBuf UDPSocket{..} ptr siz
   | connected = void $ NS.sendBuf   udpSocket ptr siz
   | otherwise = void $ NS.sendBufTo udpSocket ptr siz peerSockAddr
 
+-- | Receiving data in a buffer with a UDP socket.
+--   If the socket is connected, recv() is called.
+--   Otherwise, recvfrom() is called.
 recvBuf :: UDPSocket -> (Ptr Word8 -> Int -> IO Int)
 recvBuf UDPSocket{..} ptr siz
   | connected = NS.recvBuf   udpSocket ptr siz
