@@ -1,13 +1,13 @@
 name:                network-udp
 version:             0.0.0
-synopsis:            QUIC
-description:         UDP library for clients and servers
+synopsis:            UDP library
+description:         Best current practice library for UDP clients and servers.
 license:             BSD3
 license-file:        LICENSE
 author:              Kazu Yamamoto
 maintainer:          kazu@iij.ad.jp
 -- copyright:
-category:            Web
+category:            Network
 build-type:          Simple
 cabal-version:       >= 1.10
 
